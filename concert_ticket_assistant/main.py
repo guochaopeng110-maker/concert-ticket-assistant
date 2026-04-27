@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 
 from concert_ticket_assistant.core.models import PurchaseIntent
 from concert_ticket_assistant.core.orchestrator import TicketOrchestrator
@@ -17,6 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audience", default="", help="Comma separated audience names")
     parser.add_argument("--backup-sessions", default="", help="Comma separated backup session ids")
     parser.add_argument("--backup-tiers", default="", help="Comma separated backup price tiers")
+    parser.add_argument("--interval-seconds", type=float, default=1.0, help="Polling interval in seconds")
+    parser.add_argument("--max-cycles", type=int, default=0, help="0 means run forever")
+    parser.add_argument("--dedupe-window-seconds", type=float, default=30.0, help="Duplicate alert suppression window")
     return parser
 
 
@@ -37,16 +41,29 @@ def main() -> int:
     )
 
     adapter = DamaiAdapter()
-    try:
-        signal = adapter.poll_signal(event_id=args.event_id, session_id=args.session_id)
-    except (DamaiAdapterError, OSError, ValueError) as exc:
-        print(f"adapter_error={exc}")
-        return 2
-
     notifier = ConsoleNotifier()
-    orchestrator = TicketOrchestrator(notifier=notifier)
-    result = orchestrator.handle_signal(intent=intent, signal=signal)
-    print(f"notified={result.notified} reason={result.reason}")
+    orchestrator = TicketOrchestrator(notifier=notifier, dedupe_window_seconds=args.dedupe_window_seconds)
+
+    cycle = 0
+    try:
+        while True:
+            cycle += 1
+            try:
+                signal = adapter.poll_signal(event_id=args.event_id, session_id=args.session_id)
+            except (DamaiAdapterError, OSError, ValueError) as exc:
+                print(f"cycle={cycle} adapter_error={exc}")
+            else:
+                result = orchestrator.handle_signal(intent=intent, signal=signal)
+                print(
+                    f"cycle={cycle} signal={signal.signal_type.value} "
+                    f"tiers={signal.price_tiers} notified={result.notified} reason={result.reason}"
+                )
+
+            if args.max_cycles > 0 and cycle >= args.max_cycles:
+                break
+            time.sleep(max(0.05, args.interval_seconds))
+    except KeyboardInterrupt:
+        print("stopped_by_user=true")
     return 0
 
 

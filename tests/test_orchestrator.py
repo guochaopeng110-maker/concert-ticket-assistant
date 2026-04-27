@@ -68,6 +68,38 @@ class OrchestratorTests(unittest.TestCase):
         self.assertFalse(second.notified)
         self.assertEqual(second.reason, "Rate limited")
 
+    def test_orchestrator_suppresses_duplicates_within_window(self) -> None:
+        notifier = FakeNotifier()
+        orchestrator = TicketOrchestrator(
+            notifier=notifier,
+            limiter=RateLimiter(max_requests=10, window_seconds=1.0),
+            retry_budget=RetryBudget(max_attempts=5),
+            dedupe_window_seconds=30.0,
+        )
+        intent = PurchaseIntent(
+            event_id="evt-1",
+            session_id="A",
+            price_tier="480",
+            quantity=1,
+            audience_names=["u1"],
+        )
+        signal = MonitorSignal(
+            platform="damai",
+            event_id="evt-1",
+            session_id="A",
+            signal_type=SignalType.ON_SALE,
+            official_purchase_url="https://detail.damai.cn/item.htm?id=evt-1",
+            price_tiers=["480"],
+        )
+        first = orchestrator.handle_signal(intent, signal, now=10.0)
+        second = orchestrator.handle_signal(intent, signal, now=15.0)
+        third = orchestrator.handle_signal(intent, signal, now=41.0)
+        self.assertTrue(first.notified)
+        self.assertFalse(second.notified)
+        self.assertEqual(second.reason, "Duplicate suppressed")
+        self.assertTrue(third.notified)
+        self.assertEqual(len(notifier.messages), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
