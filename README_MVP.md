@@ -20,5 +20,9 @@ py -m concert_ticket_assistant.main --event-id 123 --session-id A --price-tier 4
 ```
 
 Current Damai adapter is a stub and only returns official purchase URL guidance.
-No payment automation or anti-risk-control logic is implemented.
+Current Damai adapter supports official subpage signal parsing for:
+- `ON_SALE` (e.g. "立即购买", "选座购买")
+- `SOLD_OUT` (e.g. "缺货登记")
+- `UNKNOWN` (e.g. "即将开抢" and fallback)
 
+No payment automation or anti-risk-control logic is implemented.

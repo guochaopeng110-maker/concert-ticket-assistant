@@ -5,7 +5,7 @@ import argparse
 from concert_ticket_assistant.core.models import PurchaseIntent
 from concert_ticket_assistant.core.orchestrator import TicketOrchestrator
 from concert_ticket_assistant.notify.console import ConsoleNotifier
-from concert_ticket_assistant.platforms.damai.adapter import DamaiAdapter
+from concert_ticket_assistant.platforms.damai.adapter import DamaiAdapter, DamaiAdapterError
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,7 +37,12 @@ def main() -> int:
     )
 
     adapter = DamaiAdapter()
-    signal = adapter.poll_signal(event_id=args.event_id, session_id=args.session_id)
+    try:
+        signal = adapter.poll_signal(event_id=args.event_id, session_id=args.session_id)
+    except (DamaiAdapterError, OSError, ValueError) as exc:
+        print(f"adapter_error={exc}")
+        return 2
+
     notifier = ConsoleNotifier()
     orchestrator = TicketOrchestrator(notifier=notifier)
     result = orchestrator.handle_signal(intent=intent, signal=signal)
@@ -47,4 +52,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
