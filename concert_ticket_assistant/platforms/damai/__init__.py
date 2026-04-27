@@ -1,0 +1,2 @@
+"""Damai platform adapter."""
+
