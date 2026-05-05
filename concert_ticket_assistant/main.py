@@ -5,10 +5,10 @@ import time
 
 from concert_ticket_assistant.core.config import MonitorConfig, load_config
 from concert_ticket_assistant.core.models import PurchaseIntent
-from concert_ticket_assistant.core.monitoring import RunMetrics
+from concert_ticket_assistant.core.monitoring import RunMetrics, save_error_snapshot
 from concert_ticket_assistant.core.orchestrator import TicketOrchestrator
 from concert_ticket_assistant.notify.console import ConsoleNotifier
-from concert_ticket_assistant.platforms.damai.adapter import DamaiAdapter, DamaiAdapterError
+from concert_ticket_assistant.platforms.damai.adapter import DamaiAdapter, DamaiAdapterError, DamaiErrorKind
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dedupe-window-seconds", type=float, default=30.0, help="Duplicate alert suppression window")
     parser.add_argument("--breaker-fail-threshold", type=int, default=5, help="Consecutive failures to open breaker")
     parser.add_argument("--breaker-cooldown-seconds", type=float, default=10.0, help="Breaker cooldown seconds")
+    parser.add_argument("--snapshot-dir", default=".omx/logs/snapshots", help="Directory for parse error payload snapshots")
     return parser
 
 
@@ -104,7 +105,24 @@ def main() -> int:
                     signal = adapter.poll_signal(event_id=cfg.event_id, session_id=cfg.session_id)
                 except DamaiAdapterError as exc:
                     metrics.on_adapter_error(exc.kind.value)
-                    metrics.log_event("adapter_error", cycle=cycle, kind=exc.kind.value, message=str(exc))
+                    snapshot_path = ""
+                    if exc.kind == DamaiErrorKind.PARSE_ERROR and exc.raw_payload:
+                        snapshot_path = save_error_snapshot(
+                            base_dir=args.snapshot_dir,
+                            platform="damai",
+                            kind=exc.kind.value,
+                            cycle=cycle,
+                            event_id=cfg.event_id,
+                            session_id=cfg.session_id,
+                            payload=exc.raw_payload,
+                        )
+                    metrics.log_event(
+                        "adapter_error",
+                        cycle=cycle,
+                        kind=exc.kind.value,
+                        message=str(exc),
+                        snapshot=snapshot_path,
+                    )
                     if metrics.maybe_open_breaker(cfg.breaker_fail_threshold, cfg.breaker_cooldown_seconds, now=now):
                         metrics.log_event("breaker_opened", cycle=cycle, cooldown_seconds=cfg.breaker_cooldown_seconds)
                 except OSError as exc:
@@ -145,4 +163,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

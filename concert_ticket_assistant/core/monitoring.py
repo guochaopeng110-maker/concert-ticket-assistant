@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 
@@ -48,3 +49,19 @@ class RunMetrics:
         print(line)
         return line
 
+
+def save_error_snapshot(
+    base_dir: str,
+    platform: str,
+    kind: str,
+    cycle: int,
+    event_id: str,
+    session_id: str,
+    payload: str,
+) -> str:
+    folder = Path(base_dir) / platform / kind
+    folder.mkdir(parents=True, exist_ok=True)
+    ts = int(time.time() * 1000)
+    path = folder / f"{ts}-cycle{cycle}-event{event_id}-session{session_id}.txt"
+    path.write_text(payload[:10000], encoding="utf-8")
+    return str(path)

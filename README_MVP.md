@@ -38,6 +38,7 @@ Monitoring runtime flags:
 - `--dedupe-window-seconds`: suppress duplicate notifications in a time window
 - `--breaker-fail-threshold`: consecutive adapter failures before breaker opens
 - `--breaker-cooldown-seconds`: breaker cooldown time
+- `--snapshot-dir`: parse error payload snapshot output directory
 
 Adapter error kinds:
 - `network_error`

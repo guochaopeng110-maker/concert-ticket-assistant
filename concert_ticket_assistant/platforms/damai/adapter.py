@@ -21,9 +21,10 @@ class DamaiErrorKind(str, Enum):
 
 
 class DamaiAdapterError(RuntimeError):
-    def __init__(self, message: str, kind: DamaiErrorKind) -> None:
+    def __init__(self, message: str, kind: DamaiErrorKind, raw_payload: str = "") -> None:
         super().__init__(message)
         self.kind = kind
+        self.raw_payload = raw_payload
 
 
 @dataclass
@@ -37,7 +38,6 @@ class DamaiAdapter:
         signal_type, available_tiers = self._build_signal(payload)
         perform = payload.get("perform") if isinstance(payload, dict) else {}
         perform_id = str(perform.get("performId", "")) if isinstance(perform, dict) else ""
-
         return MonitorSignal(
             platform=self.name,
             event_id=event_id,
@@ -67,7 +67,6 @@ class DamaiAdapter:
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ),
         }
-
         if self.session is not None:
             try:
                 response = self.session.get(
@@ -81,9 +80,7 @@ class DamaiAdapter:
                 raise DamaiAdapterError("Damai request failed", DamaiErrorKind.NETWORK) from exc
             return self._parse_subpage_payload(response.text)
 
-        query = urlencode(params)
-        url = f"https://detail.damai.cn/subpage?{query}"
-        req = Request(url, headers=headers, method="GET")
+        req = Request(f"https://detail.damai.cn/subpage?{urlencode(params)}", headers=headers, method="GET")
         try:
             with urlopen(req, timeout=self.timeout_seconds) as resp:
                 body = resp.read().decode("utf-8", errors="replace")
@@ -96,35 +93,32 @@ class DamaiAdapter:
         body = payload.strip()
         lower = body.lower()
         if not body:
-            raise DamaiAdapterError("Empty Damai payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE)
-
+            raise DamaiAdapterError("Empty Damai payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE, raw_payload=payload)
         if body.startswith("<"):
             if "passport.damai.cn" in lower or "login" in lower:
-                raise DamaiAdapterError("Damai login required", DamaiErrorKind.NOT_LOGGED_IN)
-            if any(key in body for key in ("验证码", "安全验证")) or "anti" in lower:
-                raise DamaiAdapterError("Damai risk control page", DamaiErrorKind.RISK_CONTROL)
-            if any(key in body for key in ("系统繁忙", "稍后再试")):
-                raise DamaiAdapterError("Damai temporary page", DamaiErrorKind.TEMPORARY_UNAVAILABLE)
-            raise DamaiAdapterError("Damai API changed: HTML response", DamaiErrorKind.API_CHANGED)
+                raise DamaiAdapterError("Damai login required", DamaiErrorKind.NOT_LOGGED_IN, raw_payload=body)
+            if any(x in body for x in ("验证码", "安全验证")) or "anti" in lower:
+                raise DamaiAdapterError("Damai risk control page", DamaiErrorKind.RISK_CONTROL, raw_payload=body)
+            if any(x in body for x in ("系统繁忙", "稍后再试")):
+                raise DamaiAdapterError("Damai temporary page", DamaiErrorKind.TEMPORARY_UNAVAILABLE, raw_payload=body)
+            raise DamaiAdapterError("Damai API changed: HTML response", DamaiErrorKind.API_CHANGED, raw_payload=body)
 
         if body.startswith("__jp0(") and body.endswith(")"):
             body = body[len("__jp0(") : -1]
         elif body.startswith("null(") and body.endswith(")"):
             body = body[len("null(") : -1]
 
-        if any(key in body for key in ('"ret":["FAIL_SYS_BUSY"', "系统繁忙", "稍后再试")):
-            raise DamaiAdapterError("Damai temporary payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE)
+        if any(x in body for x in ('"ret":["FAIL_SYS_BUSY"', "系统繁忙", "稍后再试")):
+            raise DamaiAdapterError("Damai temporary payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE, raw_payload=body)
 
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise DamaiAdapterError("Failed to parse Damai subpage payload", DamaiErrorKind.PARSE_ERROR) from exc
-
+            raise DamaiAdapterError("Failed to parse Damai subpage payload", DamaiErrorKind.PARSE_ERROR, raw_payload=body) from exc
         if not isinstance(data, dict):
-            raise DamaiAdapterError("Damai subpage payload is not an object", DamaiErrorKind.API_CHANGED)
-
+            raise DamaiAdapterError("Damai subpage payload is not an object", DamaiErrorKind.API_CHANGED, raw_payload=body)
         if "perform" not in data or "skuPagePcBuyBtn" not in data:
-            raise DamaiAdapterError("Damai payload missing required fields", DamaiErrorKind.API_CHANGED)
+            raise DamaiAdapterError("Damai payload missing required fields", DamaiErrorKind.API_CHANGED, raw_payload=body)
         return data
 
     @staticmethod
@@ -132,41 +126,34 @@ class DamaiAdapter:
         return "".join(text.split())
 
     def _build_signal(self, payload: dict[str, Any]) -> tuple[SignalType, list[str]]:
-        perform = payload.get("perform") if isinstance(payload, dict) else None
+        perform = payload.get("perform", {})
         sku_list = perform.get("skuList", []) if isinstance(perform, dict) else []
-        buy_section = payload.get("skuPagePcBuyBtn", {}) if isinstance(payload, dict) else {}
-        btn_list = buy_section.get("skuBtnList", []) if isinstance(buy_section, dict) else []
-
-        available_tiers: list[str] = []
+        buy = payload.get("skuPagePcBuyBtn", {})
+        btn_list = buy.get("skuBtnList", []) if isinstance(buy, dict) else []
+        tiers: list[str] = []
         saw_sold_out = False
         saw_upcoming = False
         saw_unknown = False
-
-        for idx, sku in enumerate(sku_list):
-            if idx >= len(btn_list):
+        for i, sku in enumerate(sku_list):
+            if i >= len(btn_list):
                 continue
-            btn = btn_list[idx] if isinstance(btn_list[idx], dict) else {}
+            btn = btn_list[i] if isinstance(btn_list[i], dict) else {}
             text = self._normalize_button_text(str(btn.get("btnText", "")))
             tier = str(sku.get("priceName") or sku.get("price") or "").strip()
-
-            if any(key in text for key in ("立即购买", "选座购买")):
+            if any(k in text for k in ("立即购买", "选座购买")):
                 if tier:
-                    available_tiers.append(tier)
+                    tiers.append(tier)
             elif "缺货登记" in text:
                 saw_sold_out = True
             elif "即将开抢" in text:
                 saw_upcoming = True
             else:
                 saw_unknown = True
-
-        if available_tiers:
-            signal_type = SignalType.ON_SALE
-        elif saw_sold_out and not saw_upcoming:
-            signal_type = SignalType.SOLD_OUT
-        elif saw_upcoming or saw_unknown:
-            signal_type = SignalType.UNKNOWN
-        else:
-            signal_type = SignalType.UNKNOWN
-
-        return signal_type, available_tiers
+        if tiers:
+            return SignalType.ON_SALE, tiers
+        if saw_sold_out and not saw_upcoming:
+            return SignalType.SOLD_OUT, tiers
+        if saw_upcoming or saw_unknown:
+            return SignalType.UNKNOWN, tiers
+        return SignalType.UNKNOWN, tiers
 

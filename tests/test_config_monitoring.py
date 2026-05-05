@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from concert_ticket_assistant.core.config import MonitorConfig, load_config
-from concert_ticket_assistant.core.monitoring import RunMetrics
+from concert_ticket_assistant.core.monitoring import RunMetrics, save_error_snapshot
 
 
 class ConfigTests(unittest.TestCase):
@@ -30,6 +30,21 @@ class MonitoringTests(unittest.TestCase):
         self.assertTrue(opened)
         self.assertTrue(metrics.breaker_open(now=12.0))
         self.assertFalse(metrics.breaker_open(now=16.0))
+
+    def test_save_error_snapshot_writes_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = save_error_snapshot(
+                base_dir=tmp,
+                platform="damai",
+                kind="parse_error",
+                cycle=3,
+                event_id="E1",
+                session_id="S1",
+                payload="raw-body",
+            )
+            file = Path(path)
+            self.assertTrue(file.exists())
+            self.assertIn("raw-body", file.read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
