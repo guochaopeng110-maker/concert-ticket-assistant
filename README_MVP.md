@@ -52,3 +52,12 @@ Adapter error kinds:
 Platform extension:
 - Default platforms are registered by factory bootstrap.
 - New platforms can be added by calling `register_platform(name, builder)` without editing factory branch logic.
+- M2.4 scaffold automation (adapter + fixtures + tests):
+  ```powershell
+  py -m concert_ticket_assistant.tools.platform_scaffold --platform piaoniu
+  ```
+  This generates:
+  - `concert_ticket_assistant/platforms/piaoniu/adapter.py`
+  - `concert_ticket_assistant/platforms/piaoniu/__init__.py`
+  - `tests/fixtures/piaoniu/*`
+  - `tests/test_piaoniu_adapter.py`
