@@ -48,3 +48,7 @@ Adapter error kinds:
 - `api_changed`
 - `temporary_unavailable`
 - `parse_error`
+
+Platform extension:
+- Default platforms are registered by factory bootstrap.
+- New platforms can be added by calling `register_platform(name, builder)` without editing factory branch logic.
