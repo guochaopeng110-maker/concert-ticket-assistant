@@ -9,7 +9,7 @@ from concert_ticket_assistant.core.monitoring import RunMetrics, save_error_snap
 
 class ConfigTests(unittest.TestCase):
     def test_load_config_json_file(self) -> None:
-        payload = {"event_id": "E1", "session_id": "S1", "price_tier": "480"}
+        payload = {"platform": "damai", "event_id": "E1", "session_id": "S1", "price_tier": "480"}
         with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as fp:
             fp.write(json.dumps(payload))
             fp.flush()
@@ -18,6 +18,7 @@ class ConfigTests(unittest.TestCase):
         Path(path).unlink(missing_ok=True)
         self.assertEqual(data["event_id"], "E1")
         cfg = MonitorConfig.from_dict(data)
+        self.assertEqual(cfg.platform, "damai")
         self.assertEqual(cfg.session_id, "S1")
 
 

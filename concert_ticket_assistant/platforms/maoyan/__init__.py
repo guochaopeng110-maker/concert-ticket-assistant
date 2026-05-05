@@ -1,0 +1,2 @@
+"""Maoyan adapter."""
+

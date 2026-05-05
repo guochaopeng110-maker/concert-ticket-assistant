@@ -8,12 +8,13 @@ from concert_ticket_assistant.core.models import PurchaseIntent
 from concert_ticket_assistant.core.monitoring import RunMetrics, save_error_snapshot
 from concert_ticket_assistant.core.orchestrator import TicketOrchestrator
 from concert_ticket_assistant.notify.console import ConsoleNotifier
-from concert_ticket_assistant.platforms.damai.adapter import DamaiAdapter, DamaiAdapterError, DamaiErrorKind
+from concert_ticket_assistant.platforms.factory import build_platform_adapter
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compliant multi-platform concert ticket assistant (MVP).")
     parser.add_argument("--config", default="", help="JSON config path")
+    parser.add_argument("--platform", default="", help="Platform name: damai or maoyan")
     parser.add_argument("--event-id", default="", help="Target event id")
     parser.add_argument("--session-id", default="", help="Target session id")
     parser.add_argument("--price-tier", default="", help="Target price tier text")
@@ -38,6 +39,7 @@ def resolve_config(args: argparse.Namespace) -> MonitorConfig:
     file_data = load_config(args.config or None)
     merged = {
         "event_id": file_data.get("event_id") or args.event_id,
+        "platform": file_data.get("platform") or args.platform or "damai",
         "session_id": file_data.get("session_id") or args.session_id,
         "price_tier": file_data.get("price_tier") or args.price_tier,
         "quantity": args.quantity if args.quantity != 1 or "quantity" not in file_data else file_data.get("quantity"),
@@ -88,7 +90,7 @@ def main() -> int:
         backup_price_tiers=cfg.backup_tiers or [],
     )
 
-    adapter = DamaiAdapter()
+    adapter = build_platform_adapter(cfg.platform)
     notifier = ConsoleNotifier()
     orchestrator = TicketOrchestrator(notifier=notifier, dedupe_window_seconds=cfg.dedupe_window_seconds)
     metrics = RunMetrics()
@@ -103,31 +105,30 @@ def main() -> int:
             else:
                 try:
                     signal = adapter.poll_signal(event_id=cfg.event_id, session_id=cfg.session_id)
-                except DamaiAdapterError as exc:
-                    metrics.on_adapter_error(exc.kind.value)
+                except Exception as exc:
+                    kind = getattr(getattr(exc, "kind", None), "value", "adapter_error")
+                    raw_payload = getattr(exc, "raw_payload", "")
+                    metrics.on_adapter_error(kind)
                     snapshot_path = ""
-                    if exc.kind == DamaiErrorKind.PARSE_ERROR and exc.raw_payload:
+                    if kind == "parse_error" and raw_payload:
                         snapshot_path = save_error_snapshot(
                             base_dir=args.snapshot_dir,
-                            platform="damai",
-                            kind=exc.kind.value,
+                            platform=cfg.platform,
+                            kind=kind,
                             cycle=cycle,
                             event_id=cfg.event_id,
                             session_id=cfg.session_id,
-                            payload=exc.raw_payload,
+                            payload=raw_payload,
                         )
                     metrics.log_event(
                         "adapter_error",
                         cycle=cycle,
-                        kind=exc.kind.value,
+                        kind=kind,
                         message=str(exc),
                         snapshot=snapshot_path,
                     )
                     if metrics.maybe_open_breaker(cfg.breaker_fail_threshold, cfg.breaker_cooldown_seconds, now=now):
                         metrics.log_event("breaker_opened", cycle=cycle, cooldown_seconds=cfg.breaker_cooldown_seconds)
-                except OSError as exc:
-                    metrics.on_adapter_error("os_error")
-                    metrics.log_event("adapter_error", cycle=cycle, kind="os_error", message=str(exc))
                 else:
                     result = orchestrator.handle_signal(intent=intent, signal=signal, now=now)
                     suppressed = result.reason == "Duplicate suppressed"

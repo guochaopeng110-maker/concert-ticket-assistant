@@ -33,6 +33,7 @@ Current Damai adapter supports official subpage signal parsing for:
 No payment automation or anti-risk-control logic is implemented.
 
 Monitoring runtime flags:
+- `--platform`: target platform (`damai` or `maoyan`)
 - `--interval-seconds`: polling interval
 - `--max-cycles`: stop after N cycles (0 means run forever)
 - `--dedupe-window-seconds`: suppress duplicate notifications in a time window

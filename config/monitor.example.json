@@ -1,4 +1,5 @@
 {
+  "platform": "damai",
   "event_id": "123456",
   "session_id": "A",
   "price_tier": "480",
@@ -12,4 +13,3 @@
   "breaker_fail_threshold": 5,
   "breaker_cooldown_seconds": 10.0
 }
-

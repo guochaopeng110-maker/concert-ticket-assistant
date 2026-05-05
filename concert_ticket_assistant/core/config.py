@@ -8,6 +8,7 @@ from typing import Any
 
 @dataclass(frozen=True)
 class MonitorConfig:
+    platform: str
     event_id: str
     session_id: str
     price_tier: str
@@ -24,6 +25,7 @@ class MonitorConfig:
     @staticmethod
     def from_dict(data: dict[str, Any]) -> "MonitorConfig":
         return MonitorConfig(
+            platform=str(data.get("platform", "damai")).lower(),
             event_id=str(data["event_id"]),
             session_id=str(data["session_id"]),
             price_tier=str(data["price_tier"]),
@@ -47,4 +49,3 @@ def load_config(path: str | None) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError("Config file must contain a JSON object")
     return data
-
