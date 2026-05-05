@@ -3,11 +3,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from concert_ticket_assistant.core.models import SignalType
-from concert_ticket_assistant.platforms.maoyan.adapter import (
-    MaoyanAdapter,
-    MaoyanAdapterError,
-    MaoyanErrorKind,
-)
+from concert_ticket_assistant.platforms.errors import AdapterErrorKind
+from concert_ticket_assistant.platforms.maoyan.adapter import MaoyanAdapter, MaoyanAdapterError
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "maoyan"
@@ -20,9 +17,9 @@ def _fixture(name: str) -> str:
 class MaoyanAdapterTests(unittest.TestCase):
     def test_parse_payload_matrix(self) -> None:
         cases = [
-            ("payload_login.html", MaoyanErrorKind.NOT_LOGGED_IN),
-            ("payload_busy.json", MaoyanErrorKind.TEMPORARY_UNAVAILABLE),
-            ("payload_missing_fields.json", MaoyanErrorKind.API_CHANGED),
+            ("payload_login.html", AdapterErrorKind.NOT_LOGGED_IN),
+            ("payload_busy.json", AdapterErrorKind.TEMPORARY_UNAVAILABLE),
+            ("payload_missing_fields.json", AdapterErrorKind.API_CHANGED),
         ]
         for filename, expected in cases:
             with self.assertRaises(MaoyanAdapterError) as ctx:
