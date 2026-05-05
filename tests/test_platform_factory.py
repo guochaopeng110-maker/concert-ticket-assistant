@@ -7,6 +7,7 @@ from concert_ticket_assistant.platforms.factory import (
     list_platforms,
 )
 from concert_ticket_assistant.platforms.maoyan.adapter import MaoyanAdapter
+from concert_ticket_assistant.platforms.piaoniu.adapter import PiaoniuAdapter
 from concert_ticket_assistant.platforms.registry import (
     build_registered_platform,
     clear_registry,
@@ -26,10 +27,11 @@ class PlatformFactoryTests(unittest.TestCase):
     def test_build_supported_platforms(self) -> None:
         self.assertIsInstance(build_platform_adapter("damai"), DamaiAdapter)
         self.assertIsInstance(build_platform_adapter("maoyan"), MaoyanAdapter)
+        self.assertIsInstance(build_platform_adapter("piaoniu"), PiaoniuAdapter)
 
     def test_list_platforms(self) -> None:
         ensure_default_platforms_registered()
-        self.assertEqual(list_platforms(), ["damai", "maoyan"])
+        self.assertEqual(list_platforms(), ["damai", "maoyan", "piaoniu"])
 
     def test_build_unsupported_platform_raises(self) -> None:
         with self.assertRaises(ValueError):
@@ -54,4 +56,3 @@ class PlatformFactoryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

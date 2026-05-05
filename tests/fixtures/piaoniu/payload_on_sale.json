@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "data": {
+    "skuList": [
+      {"status": "selling", "priceName": "380"},
+      {"status": "sold_out", "priceName": "580"}
+    ]
+  }
+}
