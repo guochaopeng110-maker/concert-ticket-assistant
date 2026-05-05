@@ -1,0 +1,15 @@
+{
+  "event_id": "123456",
+  "session_id": "A",
+  "price_tier": "480",
+  "quantity": 1,
+  "audience": ["Alice"],
+  "backup_sessions": [],
+  "backup_tiers": [],
+  "interval_seconds": 1.0,
+  "max_cycles": 3,
+  "dedupe_window_seconds": 30.0,
+  "breaker_fail_threshold": 5,
+  "breaker_cooldown_seconds": 10.0
+}
+

@@ -2,21 +2,32 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
+from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from concert_ticket_assistant.core.models import MonitorSignal, SignalType
 
 
+class DamaiErrorKind(str, Enum):
+    NETWORK = "network_error"
+    NOT_LOGGED_IN = "not_logged_in"
+    RISK_CONTROL = "risk_control"
+    API_CHANGED = "api_changed"
+    TEMPORARY_UNAVAILABLE = "temporary_unavailable"
+    PARSE_ERROR = "parse_error"
+
+
 class DamaiAdapterError(RuntimeError):
-    pass
+    def __init__(self, message: str, kind: DamaiErrorKind) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 @dataclass
 class DamaiAdapter:
-    """Official data based signal monitor for Damai."""
-
     name: str = "damai"
     timeout_seconds: float = 8.0
     session: Any = None
@@ -25,9 +36,7 @@ class DamaiAdapter:
         payload = self._fetch_subpage(event_id=event_id, session_id=session_id)
         signal_type, available_tiers = self._build_signal(payload)
         perform = payload.get("perform") if isinstance(payload, dict) else {}
-        perform_id = ""
-        if isinstance(perform, dict):
-            perform_id = str(perform.get("performId", ""))
+        perform_id = str(perform.get("performId", "")) if isinstance(perform, dict) else ""
 
         return MonitorSignal(
             platform=self.name,
@@ -49,9 +58,7 @@ class DamaiAdapter:
             "bizCode": "ali.china.damai",
             "scenario": "itemsku",
         }
-        # Remove None values to keep request clean.
         params = {k: v for k, v in params.items() if v is not None}
-
         headers = {
             "accept": "*/*",
             "referer": "https://detail.damai.cn/item.htm",
@@ -62,37 +69,67 @@ class DamaiAdapter:
         }
 
         if self.session is not None:
-            response = self.session.get("https://detail.damai.cn/subpage", params=params, headers=headers, timeout=self.timeout_seconds)
-            response.raise_for_status()
+            try:
+                response = self.session.get(
+                    "https://detail.damai.cn/subpage",
+                    params=params,
+                    headers=headers,
+                    timeout=self.timeout_seconds,
+                )
+                response.raise_for_status()
+            except Exception as exc:
+                raise DamaiAdapterError("Damai request failed", DamaiErrorKind.NETWORK) from exc
             return self._parse_subpage_payload(response.text)
 
         query = urlencode(params)
         url = f"https://detail.damai.cn/subpage?{query}"
         req = Request(url, headers=headers, method="GET")
-        with urlopen(req, timeout=self.timeout_seconds) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
+        try:
+            with urlopen(req, timeout=self.timeout_seconds) as resp:
+                body = resp.read().decode("utf-8", errors="replace")
+        except URLError as exc:
+            raise DamaiAdapterError("Damai request failed", DamaiErrorKind.NETWORK) from exc
         return self._parse_subpage_payload(body)
 
     @staticmethod
     def _parse_subpage_payload(payload: str) -> dict[str, Any]:
         body = payload.strip()
+        lower = body.lower()
+        if not body:
+            raise DamaiAdapterError("Empty Damai payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE)
+
+        if body.startswith("<"):
+            if "passport.damai.cn" in lower or "login" in lower:
+                raise DamaiAdapterError("Damai login required", DamaiErrorKind.NOT_LOGGED_IN)
+            if any(key in body for key in ("验证码", "安全验证")) or "anti" in lower:
+                raise DamaiAdapterError("Damai risk control page", DamaiErrorKind.RISK_CONTROL)
+            if any(key in body for key in ("系统繁忙", "稍后再试")):
+                raise DamaiAdapterError("Damai temporary page", DamaiErrorKind.TEMPORARY_UNAVAILABLE)
+            raise DamaiAdapterError("Damai API changed: HTML response", DamaiErrorKind.API_CHANGED)
+
         if body.startswith("__jp0(") and body.endswith(")"):
             body = body[len("__jp0(") : -1]
         elif body.startswith("null(") and body.endswith(")"):
             body = body[len("null(") : -1]
 
+        if any(key in body for key in ('"ret":["FAIL_SYS_BUSY"', "系统繁忙", "稍后再试")):
+            raise DamaiAdapterError("Damai temporary payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE)
+
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise DamaiAdapterError("Failed to parse Damai subpage payload") from exc
+            raise DamaiAdapterError("Failed to parse Damai subpage payload", DamaiErrorKind.PARSE_ERROR) from exc
 
         if not isinstance(data, dict):
-            raise DamaiAdapterError("Damai subpage payload is not an object")
+            raise DamaiAdapterError("Damai subpage payload is not an object", DamaiErrorKind.API_CHANGED)
+
+        if "perform" not in data or "skuPagePcBuyBtn" not in data:
+            raise DamaiAdapterError("Damai payload missing required fields", DamaiErrorKind.API_CHANGED)
         return data
 
     @staticmethod
     def _normalize_button_text(text: str) -> str:
-        return "".join(text.split()).lower()
+        return "".join(text.split())
 
     def _build_signal(self, payload: dict[str, Any]) -> tuple[SignalType, list[str]]:
         perform = payload.get("perform") if isinstance(payload, dict) else None
@@ -109,11 +146,10 @@ class DamaiAdapter:
             if idx >= len(btn_list):
                 continue
             btn = btn_list[idx] if isinstance(btn_list[idx], dict) else {}
-            raw_text = str(btn.get("btnText", ""))
-            text = self._normalize_button_text(raw_text)
+            text = self._normalize_button_text(str(btn.get("btnText", "")))
             tier = str(sku.get("priceName") or sku.get("price") or "").strip()
 
-            if "立即购买" in text or "选座购买" in text:
+            if any(key in text for key in ("立即购买", "选座购买")):
                 if tier:
                     available_tiers.append(tier)
             elif "缺货登记" in text:
@@ -133,3 +169,4 @@ class DamaiAdapter:
             signal_type = SignalType.UNKNOWN
 
         return signal_type, available_tiers
+
