@@ -2,29 +2,21 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from concert_ticket_assistant.core.models import MonitorSignal, SignalType
+from concert_ticket_assistant.platforms.errors import AdapterError, AdapterErrorKind
 
 
-class DamaiErrorKind(str, Enum):
-    NETWORK = "network_error"
-    NOT_LOGGED_IN = "not_logged_in"
-    RISK_CONTROL = "risk_control"
-    API_CHANGED = "api_changed"
-    TEMPORARY_UNAVAILABLE = "temporary_unavailable"
-    PARSE_ERROR = "parse_error"
+class DamaiErrorKind(AdapterErrorKind):
+    pass
 
 
-class DamaiAdapterError(RuntimeError):
-    def __init__(self, message: str, kind: DamaiErrorKind, raw_payload: str = "") -> None:
-        super().__init__(message)
-        self.kind = kind
-        self.raw_payload = raw_payload
+class DamaiAdapterError(AdapterError):
+    pass
 
 
 @dataclass
@@ -35,8 +27,8 @@ class DamaiAdapter:
 
     def poll_signal(self, event_id: str, session_id: str) -> MonitorSignal:
         payload = self._fetch_subpage(event_id=event_id, session_id=session_id)
-        signal_type, available_tiers = self._build_signal(payload)
-        perform = payload.get("perform") if isinstance(payload, dict) else {}
+        signal_type, tiers = self._build_signal(payload)
+        perform = payload.get("perform", {})
         perform_id = str(perform.get("performId", "")) if isinstance(perform, dict) else ""
         return MonitorSignal(
             platform=self.name,
@@ -44,7 +36,7 @@ class DamaiAdapter:
             session_id=session_id,
             signal_type=signal_type,
             official_purchase_url=f"https://detail.damai.cn/item.htm?id={event_id}",
-            price_tiers=available_tiers,
+            price_tiers=tiers,
             metadata={"source": "official_subpage", "perform_id": perform_id},
         )
 
@@ -62,10 +54,7 @@ class DamaiAdapter:
         headers = {
             "accept": "*/*",
             "referer": "https://detail.damai.cn/item.htm",
-            "user-agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            ),
+            "user-agent": "Mozilla/5.0",
         }
         if self.session is not None:
             try:
@@ -93,15 +82,15 @@ class DamaiAdapter:
         body = payload.strip()
         lower = body.lower()
         if not body:
-            raise DamaiAdapterError("Empty Damai payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE, raw_payload=payload)
+            raise DamaiAdapterError("Empty Damai payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE, payload)
         if body.startswith("<"):
             if "passport.damai.cn" in lower or "login" in lower:
-                raise DamaiAdapterError("Damai login required", DamaiErrorKind.NOT_LOGGED_IN, raw_payload=body)
+                raise DamaiAdapterError("Damai login required", DamaiErrorKind.NOT_LOGGED_IN, body)
             if any(x in body for x in ("验证码", "安全验证")) or "anti" in lower:
-                raise DamaiAdapterError("Damai risk control page", DamaiErrorKind.RISK_CONTROL, raw_payload=body)
+                raise DamaiAdapterError("Damai risk control page", DamaiErrorKind.RISK_CONTROL, body)
             if any(x in body for x in ("系统繁忙", "稍后再试")):
-                raise DamaiAdapterError("Damai temporary page", DamaiErrorKind.TEMPORARY_UNAVAILABLE, raw_payload=body)
-            raise DamaiAdapterError("Damai API changed: HTML response", DamaiErrorKind.API_CHANGED, raw_payload=body)
+                raise DamaiAdapterError("Damai temporary page", DamaiErrorKind.TEMPORARY_UNAVAILABLE, body)
+            raise DamaiAdapterError("Damai API changed: HTML response", DamaiErrorKind.API_CHANGED, body)
 
         if body.startswith("__jp0(") and body.endswith(")"):
             body = body[len("__jp0(") : -1]
@@ -109,16 +98,16 @@ class DamaiAdapter:
             body = body[len("null(") : -1]
 
         if any(x in body for x in ('"ret":["FAIL_SYS_BUSY"', "系统繁忙", "稍后再试")):
-            raise DamaiAdapterError("Damai temporary payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE, raw_payload=body)
+            raise DamaiAdapterError("Damai temporary payload", DamaiErrorKind.TEMPORARY_UNAVAILABLE, body)
 
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
-            raise DamaiAdapterError("Failed to parse Damai subpage payload", DamaiErrorKind.PARSE_ERROR, raw_payload=body) from exc
+            raise DamaiAdapterError("Failed to parse Damai subpage payload", DamaiErrorKind.PARSE_ERROR, body) from exc
         if not isinstance(data, dict):
-            raise DamaiAdapterError("Damai subpage payload is not an object", DamaiErrorKind.API_CHANGED, raw_payload=body)
+            raise DamaiAdapterError("Damai subpage payload is not an object", DamaiErrorKind.API_CHANGED, body)
         if "perform" not in data or "skuPagePcBuyBtn" not in data:
-            raise DamaiAdapterError("Damai payload missing required fields", DamaiErrorKind.API_CHANGED, raw_payload=body)
+            raise DamaiAdapterError("Damai payload missing required fields", DamaiErrorKind.API_CHANGED, body)
         return data
 
     @staticmethod

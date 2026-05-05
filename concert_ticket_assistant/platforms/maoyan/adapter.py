@@ -2,29 +2,21 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from concert_ticket_assistant.core.models import MonitorSignal, SignalType
+from concert_ticket_assistant.platforms.errors import AdapterError, AdapterErrorKind
 
 
-class MaoyanErrorKind(str, Enum):
-    NETWORK = "network_error"
-    NOT_LOGGED_IN = "not_logged_in"
-    RISK_CONTROL = "risk_control"
-    API_CHANGED = "api_changed"
-    TEMPORARY_UNAVAILABLE = "temporary_unavailable"
-    PARSE_ERROR = "parse_error"
+class MaoyanErrorKind(AdapterErrorKind):
+    pass
 
 
-class MaoyanAdapterError(RuntimeError):
-    def __init__(self, message: str, kind: MaoyanErrorKind, raw_payload: str = "") -> None:
-        super().__init__(message)
-        self.kind = kind
-        self.raw_payload = raw_payload
+class MaoyanAdapterError(AdapterError):
+    pass
 
 
 @dataclass
@@ -62,11 +54,7 @@ class MaoyanAdapter:
                 raise MaoyanAdapterError("Maoyan request failed", MaoyanErrorKind.NETWORK) from exc
             return self._parse_payload(response.text)
 
-        req = Request(
-            f"https://show.maoyan.com/api/ticket/query?{urlencode(params)}",
-            headers=headers,
-            method="GET",
-        )
+        req = Request(f"https://show.maoyan.com/api/ticket/query?{urlencode(params)}", headers=headers, method="GET")
         try:
             with urlopen(req, timeout=self.timeout_seconds) as resp:
                 body = resp.read().decode("utf-8", errors="replace")

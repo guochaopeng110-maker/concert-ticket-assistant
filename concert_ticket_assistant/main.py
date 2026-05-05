@@ -8,6 +8,7 @@ from concert_ticket_assistant.core.models import PurchaseIntent
 from concert_ticket_assistant.core.monitoring import RunMetrics, save_error_snapshot
 from concert_ticket_assistant.core.orchestrator import TicketOrchestrator
 from concert_ticket_assistant.notify.console import ConsoleNotifier
+from concert_ticket_assistant.platforms.errors import AdapterError
 from concert_ticket_assistant.platforms.factory import build_platform_adapter
 
 
@@ -105,9 +106,9 @@ def main() -> int:
             else:
                 try:
                     signal = adapter.poll_signal(event_id=cfg.event_id, session_id=cfg.session_id)
-                except Exception as exc:
-                    kind = getattr(getattr(exc, "kind", None), "value", "adapter_error")
-                    raw_payload = getattr(exc, "raw_payload", "")
+                except AdapterError as exc:
+                    kind = exc.kind
+                    raw_payload = exc.raw_payload
                     metrics.on_adapter_error(kind)
                     snapshot_path = ""
                     if kind == "parse_error" and raw_payload:
@@ -129,6 +130,9 @@ def main() -> int:
                     )
                     if metrics.maybe_open_breaker(cfg.breaker_fail_threshold, cfg.breaker_cooldown_seconds, now=now):
                         metrics.log_event("breaker_opened", cycle=cycle, cooldown_seconds=cfg.breaker_cooldown_seconds)
+                except Exception as exc:
+                    metrics.on_adapter_error("unexpected_error")
+                    metrics.log_event("adapter_error", cycle=cycle, kind="unexpected_error", message=str(exc), snapshot="")
                 else:
                     result = orchestrator.handle_signal(intent=intent, signal=signal, now=now)
                     suppressed = result.reason == "Duplicate suppressed"
